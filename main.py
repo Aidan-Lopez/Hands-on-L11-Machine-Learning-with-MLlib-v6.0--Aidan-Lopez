@@ -1,3 +1,4 @@
+
 """Hands-on L11: Predicting Airbnb Prices with MLlib Pipelines.
 
 Usage (on the Docker cluster from Hands-on L5):
@@ -94,9 +95,37 @@ def task1_pipelines():
 
     # full pipeline
     categorical, numeric = feature_columns(trainDF)
-    # TODO: indexer, encoder, assembler, LinearRegression; fit the Pipeline on trainDF;
-    #       results.append(evaluate("full", <predictions on testDF>)); save the model
-    return None
+
+    indexed = [c + "_index" for c in categorical]
+    encoded = [c + "_encoded" for c in categorical]
+
+    indexer = StringIndexer(
+        inputCols=categorical,
+        outputCols=indexed,
+        handleInvalid="skip"
+    )
+
+    encoder = OneHotEncoder(
+        inputCols=indexed,
+        outputCols=encoded
+    )
+
+    assembler = VectorAssembler(
+        inputCols=encoded + numeric,
+        outputCol="features"
+    )
+
+    lr = LinearRegression(featuresCol="features", labelCol="price")
+
+    pipeline = Pipeline(stages=[indexer, encoder, assembler, lr])
+    model = pipeline.fit(trainDF)
+
+    predictions = model.transform(testDF)
+    results.append(evaluate("full", predictions))
+
+    model.write().overwrite().save(model_dir)
+
+    return results
 
 
 # ---------------------------------------------------------------- Task 2: score with the saved model
@@ -107,8 +136,29 @@ def task2_score():
     output/task2/predictions. Print the stage class names of the loaded model and the
     RMSE of its predictions. Return the DataFrame you wrote.
     """
-    # TODO
-    return None
+    model = PipelineModel.load(model_dir)
+
+    testDF = spark.read.parquet(f"{data_dir}/split/test")
+    predictions = model.transform(testDF)
+
+    for stage in model.stages:
+        print(type(stage).__name__)
+
+    print("RMSE:", rmse_eval.evaluate(predictions))
+
+    output = predictions.select(
+        "neighbourhood_cleansed",
+        "room_type",
+        "bedrooms",
+        "price",
+        sround(col("prediction"), 1).alias("prediction")
+    )
+
+    output.coalesce(1).write.mode("overwrite").option("header", True).csv(
+        f"{out_dir}/predictions"
+    )
+
+    return output
 
 
 # ---------------------------------------------------------------- main
